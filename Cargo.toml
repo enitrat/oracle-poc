@@ -7,6 +7,7 @@ edition = "2021"
 [[bin]]
 name = "dashboard"
 path = "src/bin/dashboard.rs"
+required-features = []
 
 [dependencies]
 rindexer = { git = "https://github.com/joshstevens19/rindexer", branch = "master" }
@@ -28,3 +29,7 @@ crossterm = "0.28"
 reqwest = { version = "0.12", features = ["json"] }
 chrono = "0.4"
 anyhow = "1.0"
+rust_decimal = { version = "1.37.2", features = [
+  "db-postgres",
+  "db-diesel-postgres",
+] }

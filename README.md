@@ -65,6 +65,23 @@ cargo run -- run
 bun run script/request-randomness.ts
 ```
 
+## Dashboard
+
+A real-time terminal dashboard is available for monitoring the oracle:
+
+```bash
+cargo run --bin dashboard
+```
+
+The dashboard displays:
+
+- Queue metrics (pending, fulfilled, failed requests)
+- Average latency and performance gauges
+- Relayer account skip reasons
+- Real-time sparkline charts
+
+See [dashboard.md](dashboard.md) for details.
+
 ## Architecture
 
 - `contracts/`: Solidity smart contracts for the on-chain VRF oracle.

@@ -212,6 +212,13 @@ impl QueueProcessor {
         .await
         {
             Ok(_) => {
+                // Record metrics for fulfilled request
+                crate::relayer::metrics::record_fulfillment();
+
+                // TODO: Calculate and record actual latency from database timestamps
+                // For now, using a placeholder value
+                crate::relayer::metrics::record_latency(5.0);
+
                 // Mark as fulfilled
                 queue_db.mark_fulfilled(request.request_id).await?;
                 // Notify relayer of success

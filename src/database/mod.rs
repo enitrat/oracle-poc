@@ -111,6 +111,7 @@ impl QueueDatabase {
         let query = r#"
             UPDATE zamaoracle_vrf_oracle.pending_requests
             SET status = 'fulfilled',
+                fulfilled_at = NOW(),
                 updated_at = NOW()
             WHERE request_id = $1
         "#;

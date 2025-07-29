@@ -1,6 +1,6 @@
 mod account;
 mod config;
-mod metrics;
+pub mod metrics;
 mod scheduler;
 
 pub use config::RelayerConfig;

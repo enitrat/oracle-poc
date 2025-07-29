@@ -9,6 +9,7 @@ CREATE TABLE zamaoracle_vrf_oracle.pending_requests (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     processing_started_at TIMESTAMP WITH TIME ZONE,
+    fulfilled_at TIMESTAMP WITH TIME ZONE,
     retry_count INTEGER DEFAULT 0,
     max_retries INTEGER DEFAULT 5,
     last_error TEXT,
@@ -23,6 +24,11 @@ CREATE INDEX IF NOT EXISTS idx_pending_requests_processing ON zamaoracle_vrf_ora
     WHERE status = 'pending' OR status = 'processing';
 CREATE INDEX IF NOT EXISTS idx_pending_requests_processing_timeout ON zamaoracle_vrf_oracle.pending_requests(processing_started_at)
     WHERE status = 'processing' AND processing_started_at IS NOT NULL;
+
+-- Create index for efficient latency queries
+CREATE INDEX IF NOT EXISTS idx_pending_requests_fulfilled_at
+ON zamaoracle_vrf_oracle.pending_requests(fulfilled_at)
+WHERE status = 'fulfilled';
 
 -- Function to update the updated_at timestamp
 CREATE OR REPLACE FUNCTION zamaoracle_vrf_oracle.update_updated_at_column()

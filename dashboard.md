@@ -1,0 +1,128 @@
+# ZamaOracle Live Dashboard
+
+A real-time terminal dashboard for monitoring ZamaOracle queue and relayer activity.
+
+## Prerequisites
+
+1. **PostgreSQL Database**: The dashboard requires a running PostgreSQL instance with the ZamaOracle database.
+2. **Oracle Running**: For Prometheus metrics, the oracle should be running with metrics enabled.
+
+## Running the Dashboard
+
+```bash
+# Set environment variables (optional - these are the defaults)
+export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rindexer
+export PROMETHEUS_URL=http://127.0.0.1:9090
+
+# Run the dashboard
+cargo run --bin dashboard
+```
+
+### Starting PostgreSQL with Docker
+
+If you don't have PostgreSQL running:
+
+```bash
+docker run -d --name zamaoracle-db \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=rindexer \
+  -p 5432:5432 \
+  postgres:15
+```
+
+## Features
+
+- **Real-time Metrics**: Updates every 500ms
+- **Queue Monitoring**: Pending, fulfilled, and failed request counts
+- **Latency Tracking**: Average, min, and max latency gauges
+- **Relayer Activity**: Skip reasons and selection counts
+- **Error Display**: Shows the most recent error message
+- **Interactive Controls**: Pause/resume updates, quit gracefully
+
+## UI Layout
+
+```
++-----------------------------------------------------------+
+| ZamaOracle Dashboard                                      |
++-----------------------------------------------------------+
+| Pending │ Fulfilled │ Avg Latency │ Failed                |
+|  42     │ 1,337     │ 1.37s       │ 3                    |
++-------------------------+-----------------+---------------+
+|  Queue Length Sparkline |   Latency Gauge | Relayer Skips |
+|  (Last 60s)            |   ████▌ 1.37s   | low_balance:15|
+|  ▁▂▃▄▅▆▇█              |   Min: 0.5s     | no_gas: 8     |
++-------------------------+-----------------+---------------+
+| Status: System running normally | Press q to quit, p to pause |
++-----------------------------------------------------------+
+```
+
+## Keyboard Controls
+
+- `q` or `Q`: Quit the dashboard
+- `p` or `P`: Pause/resume updates
+
+## Metrics Displayed
+
+| Metric              | Description                                | Source                     |
+| ------------------- | ------------------------------------------ | -------------------------- |
+| **Pending**         | Number of requests waiting to be processed | `pending_requests` table   |
+| **Fulfilled**       | Total successfully processed requests      | `pending_requests` table   |
+| **Avg Latency**     | Average time from request to fulfillment   | Calculated from timestamps |
+| **Failed**          | Number of permanently failed requests      | `pending_requests` table   |
+| **Queue Sparkline** | Visual history of queue length             | Last 120 samples (60s)     |
+| **Latency Gauge**   | Visual representation of current latency   | Current avg latency        |
+| **Relayer Skips**   | Top reasons for skipping relayer accounts  | Prometheus metrics         |
+
+## Performance
+
+- CPU usage: < 5% while idle
+- Memory usage: ~20MB
+- Network: Minimal (database queries + Prometheus scraping)
+- Terminal: Works on 80×24 and larger terminals
+
+## Troubleshooting
+
+### Connection Refused Error
+
+If you see:
+
+```
+Failed to connect to PostgreSQL database!
+Connection refused (os error 61)
+```
+
+This means PostgreSQL is not running or not accessible. Solutions:
+
+1. Start PostgreSQL (see Docker command above)
+2. Check your `DATABASE_URL` environment variable is correct:
+   ```bash
+   echo $DATABASE_URL
+   ```
+3. Verify PostgreSQL is running on the expected port:
+   ```bash
+   # Check if PostgreSQL is listening
+   lsof -i :5432  # or your custom port (e.g., 5440)
+   ```
+4. Test the connection:
+   ```bash
+   psql "$DATABASE_URL" -c "SELECT 1"
+   ```
+
+### Dashboard shows "N/A" for metrics
+
+- Check database connection with `DATABASE_URL`
+- Verify Prometheus is running on port 9090 (or the configured `PROMETHEUS_URL`)
+- Ensure the oracle is running with metrics enabled (`cargo run -- run` or `cargo run -- --command run`)
+- Ensure the `pending_requests` table exists
+
+### High CPU usage
+
+- The refresh interval is set to 500ms by default
+- Database queries may need optimization for large datasets
+
+### Missing Prometheus metrics
+
+- Ensure the oracle is running with metrics enabled (`cargo run -- run` includes metrics)
+- The oracle exposes metrics on `http://127.0.0.1:9090/metrics`
+- Check that the `PROMETHEUS_URL` environment variable is correct if not using defaults
