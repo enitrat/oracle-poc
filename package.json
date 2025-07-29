@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@types/node": "^24.1.0",
+    "viem": "^2.33.1"
+  },
+  "devDependencies": {
+    "@wagmi/cli": "^2.3.2"
+  }
+}

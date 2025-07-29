@@ -1,0 +1,9 @@
+.rindexer
+    generated_csv/**/*.txt
+
+target/
+node_modules/
+cache/
+out/
+generated_csv/
+.env

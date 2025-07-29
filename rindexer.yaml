@@ -1,0 +1,26 @@
+name: zamaoracle
+project_type: rust
+config: {}
+networks:
+  - name: anvil
+    chain_id: 31337
+    rpc: http://127.0.0.1:8545
+storage:
+  postgres:
+    enabled: true
+  csv:
+    enabled: true
+    path: ./generated_csv
+native_transfers:
+  enabled: false
+contracts:
+  - name: VRFOracle
+    details:
+      - network: anvil
+        address: ${CONTRACT_ADDRESS}
+    abi: ./abis/VRFOracle.abi.json
+    include_events:
+      - RandomnessRequested
+      - RandomnessFulfilled
+graphql:
+  port: 3001
