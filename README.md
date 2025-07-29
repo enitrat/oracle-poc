@@ -1,66 +1,93 @@
-## Foundry
+# Oracle
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+A Verifiable Random Function (VRF) Oracle implementation using Rust and rindexer for Ethereum-compatible chains.
 
-Foundry consists of:
+## Overview
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+This oracle listens for randomness requests on-chain and fulfills them with cryptographically secure random values. The current implementation uses a basic RNG, with plans to implement a proper VRF (BLS 12-381 or secp256k1-based Schnorr) for production use.
 
-## Documentation
+## Prerequisites
 
-https://book.getfoundry.sh/
+- Rust 1.87+
+- Node.js 20+
+- Anvil (local Ethereum node)
+- Environment variables configured (see `.env.example`)
 
-## Usage
+## Setup
 
-### Build
+1. Clone the repository
+2. Copy `.env.example` to `.env` and configure:
+   ```bash
+   cp .env.example .env
+   ```
+3. Install dependencies:
+   ```bash
+   npm install
+   cargo build
+   ```
 
-```shell
-$ forge build
+## Running the Oracle
+
+1. Start Anvil in a separate terminal:
+   ```bash
+   anvil
+   ```
+
+2. Deploy the VRFOracle contract:
+   ```bash
+   bun run deploy
+   ```
+
+3. Start the oracle indexer:
+   ```bash
+   cargo run -- --indexer
+   ```
+
+4. Request randomness (in another terminal):
+   ```bash
+   bun run request-randomness
+   ```
+
+## Architecture
+
+- `src/oracle/`: Oracle logic for generating random values and fulfilling requests
+- `src/rindexer_lib/`: Event indexing and handling logic
+- `contracts/`: Solidity smart contracts
+- `script/`: Deployment and testing scripts
+
+## Security Considerations
+
+### Current Implementation (PoC)
+- Uses basic RNG (not suitable for production)
+- Empty proofs (VRF implementation pending)
+- Basic gas estimation
+
+### Production Requirements
+- [ ] Implement proper VRF with proof generation
+- [ ] Secure key storage (HSM/KMS)
+- [ ] Chain ID verification
+- [ ] Double-spend protection
+- [ ] Gas optimization with proper estimation
+
+## Environment Variables
+
+See `.env.example` for required configuration:
+- `ORACLE_PRIVATE_KEY`: Private key for the oracle (keep secure!)
+- `CONTRACT_ADDRESS`: Deployed VRFOracle contract address
+- `RPC_URL`: Ethereum RPC endpoint (defaults to local Anvil)
+- `USER_PRIVATE_KEY`: Test user private key
+- `DEPLOYER_PRIVATE_KEY`: Contract deployer private key
+
+## Testing
+
+```bash
+# Run integration test
+npm test
+
+# Run Rust tests
+cargo test
 ```
 
-### Test
+## License
 
-```shell
-$ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+MIT

@@ -1,4 +1,5 @@
 use std::env;
+use clap::Parser;
 
 use self::rindexer_lib::indexers::all_handlers::register_all_handlers;
 use rindexer::{
@@ -7,45 +8,27 @@ use rindexer::{
 };
 use tracing::info;
 
+mod cli;
 mod oracle;
 mod rindexer_lib;
 
+use cli::{Cli, Commands};
+
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = env::args().collect();
-    println!("Starting rindexer with args: {args:?}");
-    info!("Starting rindexer with args: {:?}", args);
+    let cli = Cli::parse();
 
-    let mut enable_graphql = false;
-    let mut enable_indexer = false;
+    let (enable_graphql, enable_indexer, port) = match &cli.command {
+        Some(Commands::Indexer { graphql }) => (*graphql, true, cli.port),
+        Some(Commands::Graphql { port }) => (true, false, port.or(cli.port)),
+        Some(Commands::Run { port }) => (true, true, port.or(cli.port)),
+        None => (true, true, cli.port), // Default to running both
+    };
 
-    let mut port: Option<u16> = None;
-
-    let args = args.iter();
-    if args.len() == 0 {
-        enable_graphql = true;
-        enable_indexer = true;
-    }
-
-    for arg in args {
-        match arg.as_str() {
-            "--graphql" => enable_graphql = true,
-            "--indexer" => enable_indexer = true,
-            _ if arg.starts_with("--port=") || arg.starts_with("--p") => {
-                if let Some(value) = arg.split('=').nth(1) {
-                    let overridden_port = value.parse::<u16>();
-                    match overridden_port {
-                        Ok(overridden_port) => port = Some(overridden_port),
-                        Err(_) => {
-                            println!("Invalid port number");
-                            return;
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    info!(
+        "Starting ZamaOracle - Indexer: {}, GraphQL: {}, Port: {:?}",
+        enable_indexer, enable_graphql, port
+    );
 
     let path = env::current_dir();
     match path {
