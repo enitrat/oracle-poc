@@ -10,6 +10,7 @@ use rindexer::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
+use tracing::trace;
 
 async fn randomness_fulfilled_handler(
     manifest_path: &PathBuf,
@@ -18,6 +19,29 @@ async fn randomness_fulfilled_handler(
     let handler = RandomnessFulfilledEvent::handler(|results, context| async move {
                                 if results.is_empty() {
                                     return Ok(());
+                                }
+
+                                // Mark fulfilled requests as completed in the queue
+                                let queue_db = crate::database::QueueDatabase::new(context.database.clone());
+
+                                for result in results.iter() {
+                                    let request_id = result.event_data.requestId;
+
+                                    match queue_db.mark_fulfilled(request_id).await {
+                                        Ok(_) => {
+                                            trace!(
+                                                "Marked request {} as fulfilled in queue",
+                                                hex::encode(request_id)
+                                            );
+                                        }
+                                        Err(e) => {
+                                            rindexer_error!(
+                                                "Failed to mark request {} as fulfilled: {:?}",
+                                                hex::encode(request_id),
+                                                e
+                                            );
+                                        }
+                                    }
                                 }
 
 
@@ -119,34 +143,30 @@ async fn randomness_requested_handler(
                                     return Ok(());
                                 }
 
-                                // Process each randomness request
+                                // Enqueue each randomness request for processing
+                                let queue_db = crate::database::QueueDatabase::new(context.database.clone());
+
                                 for result in results.iter() {
                                     let request_id = result.event_data.requestId;
                                     let contract_address = result.tx_information.address;
-                                    rindexer_info!(
-                                        "Processing randomness request {} from contract {}",
-                                        hex::encode(request_id),
-                                        contract_address
-                                    );
+                                    let network = result.tx_information.network.to_string();
 
-                                    // Spawn a task to fulfill the randomness request
-                                    tokio::spawn(async move {
-                                        match crate::oracle::fulfill_randomness_request(request_id, contract_address).await {
-                                            Ok(_) => {
-                                                rindexer_info!(
-                                                    "Successfully fulfilled randomness request {}",
-                                                    hex::encode(request_id)
-                                                );
-                                            }
-                                            Err(e) => {
-                                                rindexer_error!(
-                                                    "Failed to fulfill randomness request {}: {:?}",
-                                                    hex::encode(request_id),
-                                                    e
-                                                );
-                                            }
+                                    match queue_db.enqueue_request(request_id, contract_address, &network).await {
+                                        Ok(_) => {
+                                            trace!(
+                                                "Enqueued randomness request {} from contract {}",
+                                                hex::encode(request_id),
+                                                contract_address
+                                            );
                                         }
-                                    });
+                                        Err(e) => {
+                                            rindexer_error!(
+                                                "Failed to enqueue randomness request {}: {:?}",
+                                                hex::encode(request_id),
+                                                e
+                                            );
+                                        }
+                                    }
                                 }
 
 

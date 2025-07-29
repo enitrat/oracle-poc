@@ -130,26 +130,19 @@ contract VRFOracle {
      * @dev Only callable by designated oracle address
      * @param requestId The ID of the request to fulfill
      * @param randomness The verifiable random number
-     * @param proof Cryptographic proof of randomness validity
      * @custom:requirements
      *      - Caller must be oracle address
      *      - Request must exist and not be fulfilled
-     *      - Proof must be valid
      */
     function fulfillRandomness(
         bytes32 requestId,
-        uint256 randomness,
-        bytes calldata proof
+        uint256 randomness
     ) external {
         if (msg.sender != oracle) revert OnlyOracle();
 
         Request storage request = requests[requestId];
         if (request.requester == address(0)) revert RequestNotFound();
         if (request.fulfilled) revert AlreadyFulfilled();
-
-        if (!_verifyProof(proof, randomness)) {
-            revert("Invalid proof");
-        }
 
         request.randomness = randomness;
         request.fulfilled = true;
@@ -186,20 +179,6 @@ contract VRFOracle {
      */
     function setOracle(address _newOracle) external onlyOwner {
         oracle = _newOracle;
-    }
-
-    /**
-     * @notice Verify the cryptographic proof of randomness
-     * @param proof The VRF proof data
-     * @param randomness The random value to verify
-     * @return bool True if proof is valid
-     * @dev TODO: Integrate actual VRF verification (e.g., Chainlink VRF V2)
-     *      Currently returns true for demonstration purposes
-     */
-    function _verifyProof(bytes calldata proof, uint256 randomness) internal pure returns (bool) {
-        // TODO: integrate actual VRF verification
-        // For demo, simply return true
-        return true;
     }
 
     /**

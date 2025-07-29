@@ -113,7 +113,7 @@ async function main() {
       address: contractAddress as `0x${string}`,
       abi: ABI,
       functionName: "fulfillRandomness",
-      args: [requestId, randomValue, "0x"],
+      args: [requestId, randomValue],
     });
 
     await publicClient.waitForTransactionReceipt({ hash: fulfillTx });

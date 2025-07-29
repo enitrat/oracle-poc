@@ -83,14 +83,13 @@ contract VRFOracleTest is Test {
         vm.startPrank(oracle);
 
         uint256 randomValue = 12345678;
-        bytes memory proof = "";
 
         // Expect the event
         vm.expectEmit(true, false, false, true);
         emit RandomnessFulfilled(requestId, randomValue);
 
         // Fulfill the request
-        vrfOracle.fulfillRandomness(requestId, randomValue, proof);
+        vrfOracle.fulfillRandomness(requestId, randomValue);
 
         vm.stopPrank();
     }
@@ -137,6 +136,6 @@ contract VRFOracleTest is Test {
         // Non-oracle tries to fulfill
         vm.prank(user);
         vm.expectRevert(VRFOracle.OnlyOracle.selector);
-        vrfOracle.fulfillRandomness(requestId, 12345, "");
+        vrfOracle.fulfillRandomness(requestId, 12345);
     }
 }

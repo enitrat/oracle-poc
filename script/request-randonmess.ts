@@ -8,7 +8,7 @@ import {
   defineChain,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { vrfOracleAbi } from "../src/generated";
+// import { vrfOracleAbi } from "../src/generated";
 import { readFileSync } from "fs";
 import {
   ABI,
@@ -18,7 +18,22 @@ import {
   publicClient,
 } from "./utils";
 
-const main = async () => {
+// Track request results
+interface RequestResult {
+  requestId: string;
+  fulfilled: boolean;
+  timestamp: number;
+  batchId: number;
+}
+
+const results: RequestResult[] = [];
+let currentBatchId = 0;
+
+const main = async (
+  requestIndex: number,
+  nonce: number,
+  batchId: number,
+): Promise<RequestResult> => {
   const contractAddress = process.env.CONTRACT_ADDRESS;
   if (!contractAddress) {
     throw new Error("No contract address set in environment.");
@@ -31,6 +46,8 @@ const main = async () => {
     transport: http(ANVIL_URL),
   });
 
+  const timestamp = Date.now();
+
   try {
     // Get fee
     const fee = await publicClient.readContract({
@@ -39,22 +56,19 @@ const main = async () => {
       functionName: "fee",
     });
 
-    console.log(`Fee: ${fee} wei (${Number(fee) / 1e18} ETH)`);
-
-    // Step 1: User requests randomness
-    console.log(
-      `\n1️⃣  Requesting randomness from contract ${contractAddress}...`,
-    );
+    // Request randomness
     const requestTx = await userClient.writeContract({
       address: contractAddress as `0x${string}`,
       abi: ABI,
       functionName: "requestRandomness",
       value: fee,
+      nonce: nonce,
     });
 
     const requestReceipt = await publicClient.waitForTransactionReceipt({
       hash: requestTx,
     });
+
     // Find the RandomnessRequested event
     const requestEvent = requestReceipt.logs.find((log) => {
       try {
@@ -65,7 +79,7 @@ const main = async () => {
             ),
           ],
           data: log.data,
-          topics: log.topics as [string, ...string[]],
+          topics: log.topics as [`0x${string}`, ...`0x${string}`[]],
         });
         return decoded.eventName === "RandomnessRequested";
       } catch {
@@ -84,17 +98,15 @@ const main = async () => {
         ),
       ],
       data: requestEvent.data,
-      topics: requestEvent.topics as [string, ...string[]],
+      topics: requestEvent.topics as [`0x${string}`, ...`0x${string}`[]],
     });
 
     const requestId = decodedRequest.args.requestId;
-    console.log(`✅ Request ID: ${requestId}`);
 
-    // We wait 5secs for the request to be processed
+    // Wait 1 second for processing
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    // Step 3: Verify result
-    console.log("\n3️⃣  Fetching result...");
+    // Check result
     const result = await publicClient.readContract({
       address: contractAddress as `0x${string}`,
       abi: ABI,
@@ -103,14 +115,108 @@ const main = async () => {
     });
 
     const [fulfilled, fetchedRandomness] = result as [boolean, bigint];
-    console.log(`✅ Fulfilled: ${fulfilled}`);
-    console.log(`✅ Random value: ${fetchedRandomness}`);
 
-    if (fulfilled && fetchedRandomness !== 0n) {
-      console.log("\n✅ Test passed! VRF Oracle working correctly.");
-    } else {
-      console.log("\n❌ The oracle did not provide a value in time!");
-    }
-  } catch (error) {}
+    return {
+      requestId: requestId as string,
+      fulfilled: fulfilled && fetchedRandomness !== 0n,
+      timestamp,
+      batchId,
+    };
+  } catch (error) {
+    console.error(`Error in request #${requestIndex + 1}:`, error);
+    return {
+      requestId: "error",
+      fulfilled: false,
+      timestamp,
+      batchId,
+    };
+  }
 };
-main();
+
+// Process a batch asynchronously
+const processBatch = async (
+  batchId: number,
+  batchSize: number,
+  startingNonce: number,
+) => {
+  const batchPromises: Promise<RequestResult>[] = [];
+
+  for (let i = 0; i < batchSize; i++) {
+    const promise = main(i, startingNonce + i, batchId);
+    batchPromises.push(promise);
+  }
+
+  // Wait for batch to complete
+  const batchResults = await Promise.allSettled(batchPromises);
+
+  // Process results
+  const processedResults: RequestResult[] = [];
+  batchResults.forEach((result) => {
+    if (result.status === "fulfilled") {
+      results.push(result.value);
+      processedResults.push(result.value);
+    } else {
+      const errorResult = {
+        requestId: "error",
+        fulfilled: false,
+        timestamp: Date.now(),
+        batchId: batchId,
+      };
+      results.push(errorResult);
+      processedResults.push(errorResult);
+    }
+  });
+
+  // Report analytics for this batch
+  const fulfilled = processedResults.filter((r) => r.fulfilled).length;
+  const total = processedResults.length;
+  const successRate =
+    total > 0 ? ((fulfilled / total) * 100).toFixed(1) : "0.0";
+
+  console.log(
+    `📊 Batch #${batchId}: ${fulfilled}/${total} requests fulfilled (${successRate}%)`,
+  );
+};
+
+const runContinuousRequests = async (): Promise<void> => {
+  console.log("🚀 Starting continuous randomness requests...\n");
+
+  // Get the current nonce for the user account
+  const userAccount = privateKeyToAccount(USER_PRIVATE_KEY);
+  let currentNonce = await publicClient.getTransactionCount({
+    address: userAccount.address,
+  });
+
+  console.log(`📋 Starting nonce: ${currentNonce}`);
+
+  // Fire batches every second
+  setInterval(() => {
+    // Random batch size between 5 and 30
+    const batchSize = Math.floor(Math.random() * 26) + 5;
+    currentBatchId++;
+
+    console.log(
+      `\n🚀 Firing batch #${currentBatchId} with ${batchSize} requests`,
+    );
+
+    // Process batch asynchronously (don't await)
+    processBatch(currentBatchId, batchSize, currentNonce);
+
+    // Update nonce for next batch
+    currentNonce += batchSize;
+
+    // Clean up old results (keep last 2 minutes)
+    const cutoff = Date.now() - 120000;
+    const oldLength = results.length;
+    results.splice(
+      0,
+      results.findIndex((r) => r.timestamp > cutoff),
+    );
+    if (results.length < oldLength) {
+      console.log(`  Cleaned up ${oldLength - results.length} old results`);
+    }
+  }, 1000);
+};
+
+// Start the continuous requests
+runContinuousRequests().catch(console.error);
