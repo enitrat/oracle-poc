@@ -7,6 +7,7 @@ use rindexer::{
 };
 use tracing::info;
 
+mod oracle;
 mod rindexer_lib;
 
 #[tokio::main]

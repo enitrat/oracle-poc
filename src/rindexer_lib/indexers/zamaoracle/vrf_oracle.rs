@@ -3,6 +3,7 @@ use super::super::super::typings::zamaoracle::events::vrf_oracle::{
     no_extensions, RandomnessFulfilledEvent, RandomnessRequestedEvent, VRFOracleEventType,
 };
 use alloy::primitives::{I256, U256};
+use hex;
 use rindexer::{
     event::callback_registry::EventCallbackRegistry, rindexer_error, rindexer_info,
     EthereumSqlTypeWrapper, PgType, RindexerColorize,
@@ -116,6 +117,36 @@ async fn randomness_requested_handler(
     let handler = RandomnessRequestedEvent::handler(|results, context| async move {
                                 if results.is_empty() {
                                     return Ok(());
+                                }
+
+                                // Process each randomness request
+                                for result in results.iter() {
+                                    let request_id = result.event_data.requestId;
+                                    let contract_address = result.tx_information.address;
+                                    rindexer_info!(
+                                        "Processing randomness request {} from contract {}",
+                                        hex::encode(request_id),
+                                        contract_address
+                                    );
+
+                                    // Spawn a task to fulfill the randomness request
+                                    tokio::spawn(async move {
+                                        match crate::oracle::fulfill_randomness_request(request_id, contract_address).await {
+                                            Ok(_) => {
+                                                rindexer_info!(
+                                                    "Successfully fulfilled randomness request {}",
+                                                    hex::encode(request_id)
+                                                );
+                                            }
+                                            Err(e) => {
+                                                rindexer_error!(
+                                                    "Failed to fulfill randomness request {}: {:?}",
+                                                    hex::encode(request_id),
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    });
                                 }
 
 

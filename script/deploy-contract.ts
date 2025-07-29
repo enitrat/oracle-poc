@@ -4,6 +4,7 @@ import { deployContract } from "./utils";
 
 async function main() {
   const contractAddress = await deployContract();
+
   // Save to .env CONTRACT_ADDRESS
   const envContent = readFileSync(".env", "utf8").split("\n");
   const contractAddressIndex = envContent.findIndex((line) =>
@@ -15,6 +16,7 @@ async function main() {
   } else {
     envContent.push(`CONTRACT_ADDRESS=${contractAddress}`);
   }
+  writeFileSync(".env", envContent.join("\n"));
 }
 
 main();
