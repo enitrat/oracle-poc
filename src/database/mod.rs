@@ -125,6 +125,28 @@ impl QueueDatabase {
         Ok(())
     }
 
+    /// Requeue a request for processing
+    pub async fn requeue_request(
+        &self,
+        request_id: FixedBytes<32>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let query = r#"
+            UPDATE zamaoracle_vrf_oracle.pending_requests
+            SET status = 'pending',
+                processing_started_at = NULL,
+                updated_at = NOW()
+            WHERE request_id = $1
+        "#;
+
+        self.client
+            .execute(query, &[&request_id.as_slice()])
+            .await?;
+
+        trace!("Marked request {} as requeued", hex::encode(request_id));
+
+        Ok(())
+    }
+
     /// Mark a request as failed with error message
     pub async fn mark_failed(
         &self,
@@ -166,6 +188,99 @@ impl QueueDatabase {
 
         let row = self.client.query_one(query, &[]).await?;
         Ok(row.get(0))
+    }
+
+    /// Dequeue multiple pending requests for batch processing
+    pub async fn dequeue_requests(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PendingRequest>, Box<dyn std::error::Error + Send + Sync>> {
+        let query = r#"
+            UPDATE zamaoracle_vrf_oracle.pending_requests
+            SET status = 'processing',
+                processing_started_at = NOW(),
+                retry_count = retry_count + 1
+            WHERE request_id IN (
+                SELECT request_id
+                FROM zamaoracle_vrf_oracle.pending_requests
+                WHERE (status = 'pending'
+                    OR (status = 'processing'
+                        AND processing_started_at < NOW() - INTERVAL '5 minutes'))
+                    AND retry_count < max_retries
+                ORDER BY created_at
+                FOR UPDATE SKIP LOCKED
+                LIMIT $1
+            )
+            RETURNING request_id, contract_address, status, retry_count, network
+        "#;
+
+        let rows = self.client.query(query, &[&(limit as i64)]).await?;
+        let mut requests = Vec::new();
+
+        for row in rows {
+            let request_id_bytes: &[u8] = row.get(0);
+            let request_id = FixedBytes::<32>::try_from(request_id_bytes)
+                .map_err(|_| "Invalid request_id bytes")?;
+
+            let contract_address_str: String = row.get(1);
+            let contract_address = contract_address_str
+                .parse::<Address>()
+                .map_err(|_| "Invalid contract address")?;
+
+            requests.push(PendingRequest {
+                request_id,
+                contract_address,
+                status: row.get(2),
+                retry_count: row.get(3),
+                network: row.get(4),
+            });
+        }
+
+        if !requests.is_empty() {
+            trace!("Dequeued {} requests for batch processing", requests.len());
+        }
+
+        Ok(requests)
+    }
+
+    /// Mark multiple requests as failed
+    pub async fn mark_batch_failed(
+        &self,
+        request_ids: &[FixedBytes<32>],
+        error_message: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if request_ids.is_empty() {
+            return Ok(());
+        }
+
+        let query = r#"
+            UPDATE zamaoracle_vrf_oracle.pending_requests
+            SET status = CASE
+                    WHEN retry_count >= max_retries THEN 'failed'
+                    ELSE 'pending'
+                END,
+                last_error = $2,
+                processing_started_at = NULL,
+                updated_at = NOW()
+            WHERE request_id = ANY($1)
+        "#;
+
+        let request_id_bytes: Vec<Vec<u8>> = request_ids
+            .iter()
+            .map(|id| id.as_slice().to_vec())
+            .collect();
+
+        self.client
+            .execute(query, &[&request_id_bytes, &error_message])
+            .await?;
+
+        error!(
+            "Marked {} requests as failed: {}",
+            request_ids.len(),
+            error_message
+        );
+
+        Ok(())
     }
 
     /// Run the migration to create the pending_requests table

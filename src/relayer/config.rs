@@ -7,6 +7,8 @@ pub struct RelayerConfig {
     pub accounts: Vec<AccountConfig>,
     pub scheduler: SchedulerType,
     pub pending_block_threshold: u64,
+    pub bebe_address: Option<String>,
+    pub batch_size: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -88,10 +90,21 @@ impl RelayerConfig {
             .parse::<u64>()
             .map_err(|_| "Invalid RELAYER_PENDING_BLOCK_THRESHOLD value")?;
 
+        // Parse BEBE address
+        let bebe_address = env::var("BEBE_ADDRESS").ok();
+
+        // Parse batch size
+        let batch_size = env::var("BATCH_SIZE")
+            .unwrap_or_else(|_| "10".to_string())
+            .parse::<usize>()
+            .map_err(|_| "Invalid BATCH_SIZE value")?;
+
         Ok(Self {
             accounts,
             scheduler,
             pending_block_threshold,
+            bebe_address,
+            batch_size,
         })
     }
 

@@ -12,7 +12,6 @@ use tracing::{error, info, warn};
 mod cli;
 mod database;
 mod oracle;
-mod provider;
 mod queue_processor;
 mod relayer;
 mod rindexer_lib;

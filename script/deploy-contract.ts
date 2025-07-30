@@ -23,6 +23,20 @@ async function setupEoaDelegation() {
   if (!bebeAddress) {
     throw new Error("Failed to deploy Bebe");
   }
+
+  // Save BEBE address to .env
+  const envContent = readFileSync(".env", "utf8").split("\n");
+  const bebeAddressIndex = envContent.findIndex((line) =>
+    line.startsWith("BEBE_ADDRESS="),
+  );
+
+  if (bebeAddressIndex !== -1) {
+    envContent[bebeAddressIndex] = `BEBE_ADDRESS=${bebeAddress}`;
+  } else {
+    envContent.push(`BEBE_ADDRESS=${bebeAddress}`);
+  }
+  writeFileSync(".env", envContent.join("\n"));
+
   await authorizeDelegation(bebeAddress);
 }
 

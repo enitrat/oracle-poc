@@ -89,30 +89,51 @@ export const deployBebe = async () => {
 };
 
 export const authorizeDelegation = async (contractAddress: `0x${string}`) => {
-  const USER_PRIVATE_KEY = process.env.USER_PRIVATE_KEY as `0x${string}`;
-  const eoa = privateKeyToAccount(USER_PRIVATE_KEY);
-  const eoaClient = createWalletClient({
-    account: eoa,
-    chain: anvilChain,
-    transport: http(anvilChain.rpcUrls.default.http[0]),
-  });
+  // Get all relayer private keys
+  const RELAYER_PRIVATE_KEYS =
+    process.env.RELAYER_PRIVATE_KEYS?.split(",") || [];
 
-  const authorization = await eoaClient.signAuthorization({
-    contractAddress,
-  });
-
-  const hash = await deployerClient.sendTransaction({
-    authorizationList: [authorization],
-    to: contractAddress,
-  });
-
-  const receipt = await publicClient.waitForTransactionReceipt({
-    hash,
-  });
-  if (receipt.status === "success") {
-    console.log("🧪 Authorized Delegation of EOA to Bebe\n");
-    console.log(`Receipt: ${receipt.transactionHash}\n`);
-  } else {
-    throw new Error("Failed to authorize delegation");
+  if (RELAYER_PRIVATE_KEYS.length === 0) {
+    console.warn(
+      "⚠️  No RELAYER_PRIVATE_KEYS found, skipping BEBE authorization",
+    );
+    return;
   }
+
+  console.log(
+    `🧪 Authorizing ${RELAYER_PRIVATE_KEYS.length} EOAs for BEBE delegation\n`,
+  );
+
+  const ALL_KEYS = [...RELAYER_PRIVATE_KEYS, USER_PRIVATE_KEY];
+
+  for (const privateKey of ALL_KEYS) {
+    const trimmedKey = privateKey.trim() as `0x${string}`;
+    const eoa = privateKeyToAccount(trimmedKey);
+    const eoaClient = createWalletClient({
+      account: eoa,
+      chain: anvilChain,
+      transport: http(anvilChain.rpcUrls.default.http[0]),
+    });
+
+    const authorization = await eoaClient.signAuthorization({
+      contractAddress,
+    });
+
+    const hash = await deployerClient.sendTransaction({
+      authorizationList: [authorization],
+      to: contractAddress,
+    });
+
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash,
+    });
+
+    if (receipt.status === "success") {
+      console.log(`✅ Authorized delegation for EOA ${eoa.address}`);
+    } else {
+      throw new Error(`Failed to authorize delegation for EOA ${eoa.address}`);
+    }
+  }
+
+  console.log("\n✅ All EOAs authorized for BEBE delegation\n");
 };

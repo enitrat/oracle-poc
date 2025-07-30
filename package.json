@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "test:integration": "bun test/run-integration-test.ts",
+    "test:batch": "bun test/run-batch-integration-test.ts",
+    "start:processor": "cargo run --bin processor"
+  },
   "dependencies": {
     "@types/node": "^24.1.0",
     "viem": "^2.33.1"

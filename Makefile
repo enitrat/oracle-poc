@@ -21,8 +21,8 @@ dashboard:
 
 dev:
 	@if command -v tmux >/dev/null 2>&1; then \
-		tmux new-session -d -s zamaoracle 'anvil --hardfork prague > /dev/null 2>&1 & docker-compose up -d && bun run script/deploy-contract.ts && cargo run --bin zamaoracle'; \
-		tmux split-window -h 'sleep 5 && cargo run --bin dashboard'; \
+		tmux new-session -d -s zamaoracle 'anvil --hardfork prague > /dev/null 2>&1 & docker-compose up -d && bun run script/deploy-contract.ts && RUST_LOG=info cargo run --bin zamaoracle'; \
+		tmux split-window -h 'sleep 2 && cargo run --bin dashboard'; \
 		tmux attach-session -t zamaoracle; \
 	else \
 		echo "tmux not found. Please install tmux or run the following commands in separate terminals:"; \

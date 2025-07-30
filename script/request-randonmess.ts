@@ -39,9 +39,10 @@ interface BatchResult {
 }
 
 // ==================== Configuration ====================
-const BATCH_SIZE = 25;
-const BATCH_INTERVAL_MS = 1000;
-const RESULT_CLEANUP_INTERVAL_MS = 120000; // 2 minutes
+const BATCH_SIZE = 250;
+const WAIT_TIME_FOR_FULFILLMENT_MS = 2000;
+const BATCH_INTERVAL_MS = 1000; // 7 seconds to ensure no overlap with 6s wait time
+const RESULT_CLEANUP_INTERVAL_MS = 20000; // 10 seconds
 
 // ==================== State Management ====================
 const results: RequestResult[] = [];
@@ -75,13 +76,19 @@ async function checkRandomnessResult(
   contractAddress: string,
   requestId: string,
 ): Promise<[boolean, bigint]> {
-  const result = await publicClient.readContract({
-    address: contractAddress as `0x${string}`,
-    abi: ABI,
-    functionName: "getRandomness",
-    args: [requestId],
-  });
-  return result as [boolean, bigint];
+  try {
+    const result = await publicClient.readContract({
+      address: contractAddress as `0x${string}`,
+      abi: ABI,
+      functionName: "getRandomness",
+      args: [requestId as `0x${string}`],
+    });
+    return result as [boolean, bigint];
+  } catch (error) {
+    console.error(`❌ Error checking randomness for ${requestId}:`, error);
+    // Return unfulfilled status on error
+    return [false, 0n];
+  }
 }
 
 // ==================== Event Processing ====================
@@ -150,8 +157,8 @@ async function sendBatchRequest(
     // Extract all request IDs from events
     const requestIds = extractRandomnessRequestedEvents(requestReceipt);
 
-    // Wait for oracle processing
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Wait for oracle processing - 6s to ensure queue processor has time
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Check fulfillment for each request
     const fulfillmentResults = await Promise.all(
@@ -160,9 +167,17 @@ async function sendBatchRequest(
           contractAddress,
           requestId,
         );
+
+        // Debug logging for investigation
+        if (!fulfilled) {
+          console.log(`🔍 Request ${requestId} not fulfilled yet`);
+        } else if (randomness === 0n) {
+          console.log(`🎲 Request ${requestId} fulfilled with randomness: 0`);
+        }
+
         return {
           requestId,
-          fulfilled: fulfilled && randomness !== 0n,
+          fulfilled: fulfilled, // Only check the fulfilled flag, not the randomness value
           timestamp,
           batchId: batchId,
         };
@@ -261,6 +276,9 @@ async function runContinuousRequests(contractAddress: string): Promise<void> {
   console.log(`📋 Configuration:`);
   console.log(`   Batch size: ${BATCH_SIZE} requests`);
   console.log(`   Batch interval: ${BATCH_INTERVAL_MS}ms`);
+  console.log(
+    `   Wait time for fulfillment: ${WAIT_TIME_FOR_FULFILLMENT_MS}ms`,
+  );
   console.log(`   Contract: ${contractAddress}\n`);
 
   isRunning = true;

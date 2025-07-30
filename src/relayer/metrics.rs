@@ -22,6 +22,11 @@ pub fn init_metrics() {
             "queue_latency_seconds",
             "Time from request creation to fulfillment in seconds"
         );
+        describe_counter!(
+            "relayer_batch_fulfilled_total",
+            "Total number of batch fulfillment transactions"
+        );
+        describe_histogram!("batch_size", "Size of batches being processed");
     });
 }
 
@@ -52,4 +57,15 @@ pub fn record_fulfillment() {
 /// Record request latency
 pub fn record_latency(latency_seconds: f64) {
     histogram!("queue_latency_seconds").record(latency_seconds);
+}
+
+/// Record a batch fulfillment
+pub fn record_batch_fulfillment(batch_size: usize) {
+    counter!("relayer_batch_fulfilled_total").increment(1);
+    histogram!("batch_size").record(batch_size as f64);
+}
+
+pub fn record_batch_unfulfilled(batch_size: usize) {
+    counter!("relayer_batch_unfulfilled_total").increment(1);
+    histogram!("batch_size").record(batch_size as f64);
 }

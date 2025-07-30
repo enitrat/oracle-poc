@@ -1,7 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use reqwest;
-use rust_decimal::Decimal;
 use std::collections::HashMap;
 use tokio_postgres::{Client, NoTls};
 
@@ -48,15 +47,15 @@ impl DataLayer {
                 "postgresql://postgres:postgres@localhost:5432/rindexer".to_string()
             });
 
-        eprintln!("Attempting to connect to PostgreSQL at: {}", database_url);
+        eprintln!("Attempting to connect to PostgreSQL at: {database_url}");
 
         // Connect to PostgreSQL with better error handling
         let (client, connection) = match tokio_postgres::connect(&database_url, NoTls).await {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("\nFailed to connect to PostgreSQL database!");
-                eprintln!("Connection string: {}", database_url);
-                eprintln!("Error: {}", e);
+                eprintln!("Connection string: {database_url}");
+                eprintln!("Error: {e}");
                 eprintln!("\nPlease ensure:");
                 eprintln!("1. PostgreSQL is running");
                 eprintln!("2. The database exists");
@@ -288,7 +287,7 @@ fn parse_metric_with_labels(line: &str) -> Option<(String, u64)> {
         if let Some(label_end) = line.find('}') {
             let labels = line[label_start + 1..label_end].to_string();
             let rest = &line[label_end + 1..];
-            if let Some(value) = rest.split_whitespace().nth(0) {
+            if let Some(value) = rest.split_whitespace().next() {
                 if let Ok(val) = value.parse() {
                     return Some((labels, val));
                 }

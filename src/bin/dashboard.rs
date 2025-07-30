@@ -119,7 +119,7 @@ impl App {
                 }
             }
             Err(e) => {
-                let error_msg = format!("Failed to fetch stats: {}", e);
+                let error_msg = format!("Failed to fetch stats: {e}");
                 self.stats.last_error = Some(error_msg.clone());
                 self.error_log.push_back((Utc::now(), error_msg));
                 if self.error_log.len() > MAX_ERROR_LOG {
@@ -131,7 +131,7 @@ impl App {
         Ok(())
     }
 
-    fn toggle_pause(&mut self) {
+    const fn toggle_pause(&mut self) {
         self.paused = !self.paused;
     }
 }
@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
     let app = match App::new().await {
         Ok(app) => Arc::new(Mutex::new(app)),
         Err(e) => {
-            eprintln!("\nFailed to initialize dashboard: {}", e);
+            eprintln!("\nFailed to initialize dashboard: {e}");
             eprintln!("\nPlease ensure PostgreSQL is running and accessible.");
             std::process::exit(1);
         }
@@ -393,9 +393,9 @@ fn draw_queue_chart(f: &mut Frame, area: Rect, app: &App) {
     let x_labels = vec![Span::raw("60s ago"), Span::raw("30s ago"), Span::raw("now")];
 
     let y_labels = vec![
-        Span::raw(format!("{:.0}", min_y)),
+        Span::raw(format!("{min_y:.0}")),
         Span::raw(format!("{:.0}", max_y / 2.0)),
-        Span::raw(format!("{:.0}", max_y)),
+        Span::raw(format!("{max_y:.0}")),
     ];
 
     let chart = Chart::new(datasets)
@@ -479,7 +479,7 @@ fn draw_latency_chart(f: &mut Frame, area: Rect, app: &App) {
     let y_labels = vec![
         Span::raw("0s"),
         Span::raw(format!("{:.1}s", max_y / 2.0)),
-        Span::raw(format!("{:.1}s", max_y)),
+        Span::raw(format!("{max_y:.1}s")),
     ];
 
     let chart = Chart::new(datasets)
@@ -609,7 +609,7 @@ fn draw_relayer_chart(f: &mut Frame, area: Rect, app: &App) {
         .map(|(reason, count)| {
             Bar::default()
                 .value(*count)
-                .text_value(format!("{}", count))
+                .text_value(format!("{count}"))
                 .label(Line::from(reason.to_string()))
                 .style(Style::default().fg(Color::Red))
         })

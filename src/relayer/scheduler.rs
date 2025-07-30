@@ -3,20 +3,24 @@ use super::{
     config::{RelayerConfig, SchedulerType},
     metrics, SkipReason,
 };
-use crate::provider::NonceManager;
 use alloy::primitives::{Address, U256};
 use rand::Rng;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tracing::{info, instrument, span, trace, warn, Level};
+use tokio::sync::Mutex;
+use tracing::{info, span, trace, warn, Level};
 
 /// Main relayer struct that manages multiple accounts
 pub struct Relayer {
-    accounts: Vec<Arc<RelayerAccount>>,
+    pub accounts: Vec<Arc<RelayerAccount>>,
     scheduler_type: SchedulerType,
     pending_block_threshold: u64,
     round_robin_index: AtomicUsize,
     rpc_url: String,
+    pub batch_size: usize,
+    // Track accounts currently in use for batch processing
+    accounts_in_use: Arc<Mutex<HashSet<Address>>>,
 }
 
 impl Relayer {
@@ -29,6 +33,17 @@ impl Relayer {
         let rpc_url =
             std::env::var("RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
 
+        // Parse BEBE address if provided
+        let bebe_address = if let Some(bebe_str) = &config.bebe_address {
+            Some(
+                bebe_str
+                    .parse::<Address>()
+                    .map_err(|_| "Invalid BEBE_ADDRESS format")?,
+            )
+        } else {
+            None
+        };
+
         // Initialize accounts
         let mut accounts = Vec::new();
         for (idx, account_config) in config.accounts.iter().enumerate() {
@@ -36,12 +51,24 @@ impl Relayer {
 
             let min_gas_balance = U256::from_str_radix(&account_config.min_gas_wei, 10)?;
             let account = Arc::new(
-                RelayerAccount::new(&account_config.private_key, &rpc_url, min_gas_balance).await?,
+                RelayerAccount::new(
+                    &account_config.private_key,
+                    &rpc_url,
+                    min_gas_balance,
+                    bebe_address,
+                )
+                .await?,
             );
 
             info!(
-                "Initialized account {} with address {}",
-                idx, account.address
+                "Initialized account {} with address {}{}",
+                idx,
+                account.address,
+                if bebe_address.is_some() {
+                    " (BEBE enabled)"
+                } else {
+                    ""
+                }
             );
 
             accounts.push(account);
@@ -66,106 +93,9 @@ impl Relayer {
             pending_block_threshold: config.pending_block_threshold,
             round_robin_index: AtomicUsize::new(0),
             rpc_url,
+            batch_size: config.batch_size,
+            accounts_in_use: Arc::new(Mutex::new(HashSet::new())),
         })
-    }
-
-    /// Get the next available account and its nonce
-    #[instrument(skip(self))]
-    pub async fn next_available(
-        &self,
-    ) -> Result<(Arc<NonceManager>, u64), Box<dyn std::error::Error + Send + Sync>> {
-        let mut attempts = 0;
-        let max_attempts = self.accounts.len() * 2; // Try each account at most twice
-
-        while attempts < max_attempts {
-            attempts += 1;
-
-            // Select next account based on scheduler
-            let account = match self.scheduler_type {
-                SchedulerType::RoundRobin => self.select_round_robin().await,
-                SchedulerType::Random => self.select_random().await,
-            };
-
-            // Check if account is available
-            match account.is_available(self.pending_block_threshold).await {
-                Ok(true) => {
-                    // Get next nonce
-                    let nonce = account.nonce_manager.get_next_nonce().await;
-
-                    // Mark transaction as sent
-                    account.mark_transaction_sent().await;
-
-                    // Emit tracing span for selection
-                    span!(
-                        Level::INFO,
-                        "relayer.select",
-                        address = %account.address,
-                        nonce = %nonce
-                    )
-                    .in_scope(|| {
-                        trace!("Selected account {} with nonce {}", account.address, nonce);
-                    });
-
-                    // Record selection in Prometheus metrics
-                    metrics::record_selection(&account.address.to_string());
-
-                    return Ok((account.nonce_manager.clone(), nonce));
-                }
-                Ok(false) => {
-                    // Account not available, record skip
-                    let reason = self.determine_skip_reason(&account).await?;
-
-                    // Emit tracing span for skip
-                    span!(
-                        Level::WARN,
-                        "relayer.skip",
-                        address = %account.address,
-                        reason = %reason
-                    )
-                    .in_scope(|| {
-                        warn!(
-                            "Skipping account {} (reason: {:?})",
-                            account.address, reason
-                        );
-                    });
-
-                    // Record skip in Prometheus metrics
-                    metrics::record_skip(&account.address.to_string(), &reason.to_string());
-                }
-                Err(e) => {
-                    warn!(
-                        "Error checking account {} availability: {}",
-                        account.address, e
-                    );
-                    metrics::record_skip(
-                        &account.address.to_string(),
-                        &SkipReason::RecentFailure.to_string(),
-                    );
-                }
-            }
-        }
-
-        Err("No available relayer accounts after maximum attempts".into())
-    }
-
-    /// Mark that a nonce was used (transaction confirmed or failed)
-    pub async fn invalidate_nonce(&self, address: Address, success: bool) {
-        // Find the account
-        for account in &self.accounts {
-            if account.address == address {
-                if success {
-                    account.mark_transaction_confirmed().await;
-                } else {
-                    account.mark_transaction_failed().await;
-                }
-                return;
-            }
-        }
-
-        warn!(
-            "Attempted to invalidate nonce for unknown address: {}",
-            address
-        );
     }
 
     /// Round-robin selection
@@ -186,23 +116,107 @@ impl Relayer {
         &self,
         account: &RelayerAccount,
     ) -> Result<SkipReason, Box<dyn std::error::Error + Send + Sync>> {
-        // Check balance
-        use alloy::providers::Provider;
-        let provider = alloy::providers::ProviderBuilder::new()
-            .wallet(account.wallet.clone())
-            .on_http(self.rpc_url.parse()?);
-
-        let balance = provider.get_balance(account.address).await?;
-        if balance < account.min_gas_balance {
-            return Ok(SkipReason::InsufficientGas);
-        }
-
-        // TODO: Check for pending transactions more accurately
+        // The account's is_available method already checks balance
+        // If we're here, it's likely due to pending transactions or recent failure
         Ok(SkipReason::PendingTransaction)
     }
 
     /// Get addresses of all managed accounts
     pub fn get_addresses(&self) -> Vec<Address> {
         self.accounts.iter().map(|a| a.address).collect()
+    }
+
+    /// Get next available account for batch sending
+    pub async fn next_available_batch(
+        &self,
+    ) -> Result<Arc<RelayerAccount>, Box<dyn std::error::Error + Send + Sync>> {
+        let mut attempts = 0;
+        let max_attempts = self.accounts.len() * 3; // More attempts since we check for in-use
+
+        while attempts < max_attempts {
+            attempts += 1;
+
+            // Select next account based on scheduler
+            let account = match self.scheduler_type {
+                SchedulerType::RoundRobin => self.select_round_robin().await,
+                SchedulerType::Random => self.select_random().await,
+            };
+
+            // Check if account is already in use
+            {
+                let in_use = self.accounts_in_use.lock().await;
+                if in_use.contains(&account.address) {
+                    trace!("Account {} is already in use, skipping", account.address);
+                    continue;
+                }
+            }
+
+            // Check if account is available
+            match account.is_available(self.pending_block_threshold).await {
+                Ok(true) => {
+                    // Check if account has BEBE configured
+                    if account.bebe_address.is_none() {
+                        warn!(
+                            "Account {} selected but BEBE not configured",
+                            account.address
+                        );
+                        continue;
+                    }
+
+                    // Mark account as in use
+                    {
+                        let mut in_use = self.accounts_in_use.lock().await;
+                        in_use.insert(account.address);
+                    }
+
+                    span!(
+                        Level::INFO,
+                        "relayer.select_batch",
+                        address = %account.address
+                    )
+                    .in_scope(|| {
+                        trace!("Selected account {} for batch", account.address);
+                    });
+
+                    metrics::record_selection(&account.address.to_string());
+                    return Ok(account);
+                }
+                Ok(false) => {
+                    let reason = self.determine_skip_reason(&account).await?;
+                    span!(
+                        Level::WARN,
+                        "relayer.skip",
+                        address = %account.address,
+                        reason = %reason
+                    )
+                    .in_scope(|| {
+                        warn!(
+                            "Skipping account {} (reason: {:?})",
+                            account.address, reason
+                        );
+                    });
+                    metrics::record_skip(&account.address.to_string(), &reason.to_string());
+                }
+                Err(e) => {
+                    warn!(
+                        "Error checking account {} availability: {}",
+                        account.address, e
+                    );
+                    metrics::record_skip(
+                        &account.address.to_string(),
+                        &SkipReason::RecentFailure.to_string(),
+                    );
+                }
+            }
+        }
+
+        Err("No available relayer accounts with BEBE configured".into())
+    }
+
+    /// Release an account after batch processing
+    pub async fn release_account(&self, address: Address) {
+        let mut in_use = self.accounts_in_use.lock().await;
+        in_use.remove(&address);
+        trace!("Released account {} from batch processing", address);
     }
 }

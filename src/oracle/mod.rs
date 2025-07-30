@@ -1,18 +1,31 @@
-use crate::provider::NonceManager;
+use crate::database::PendingRequest;
+use alloy::sol_types::SolValue;
 use alloy::{
-    primitives::{Address, FixedBytes, U256},
-    rpc::types::TransactionRequest,
+    primitives::{Bytes, FixedBytes, U256},
     sol,
     sol_types::SolCall,
 };
 use rand::{rngs::OsRng, RngCore};
-use std::sync::Arc;
-use tracing::{error, info, trace};
+use tracing::trace;
 
 // Define the contract interface using sol! macro
 sol! {
     interface IVRFOracle {
         function fulfillRandomness(bytes32 requestId, uint256 randomness) external;
+        function getRandomness(bytes32 requestId) external view returns (bool fulfilled, uint256 randomness);
+    }
+}
+
+// Define the BEBE interface
+sol! {
+    interface IBEBE {
+        function execute(bytes32 mode, bytes calldata executionData) external payable;
+    }
+
+    struct Call {
+        address to; // Replaced as `address(this)` if `address(0)`. Renamed to `to` for Ithaca Porto.
+        uint256 value; // Amount of native currency (i.e. Ether) to send.
+        bytes data; // Calldata to send with the call.
     }
 }
 
@@ -23,47 +36,54 @@ pub fn generate_random_value() -> U256 {
     U256::from_be_bytes(bytes)
 }
 
-/// Fulfills a randomness request by sending a transaction to the VRF Oracle contract
-pub async fn fulfill_randomness_request_with_nonce(
-    request_id: FixedBytes<32>,
-    contract_address: Address,
-    nonce_manager: Arc<NonceManager>,
-    nonce: u64,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Generate random value
-    let random_value = generate_random_value();
-    trace!(
-        "Generated random value {} for request {} with nonce {}",
-        random_value,
-        hex::encode(request_id),
-        nonce
-    );
+/// Builds batch calls for multiple pending requests
+/// Returns a vector of Call structs ready for ERC7821 batch execution
+pub fn build_batch_calls(requests: &[PendingRequest]) -> Vec<Call> {
+    requests
+        .iter()
+        .map(|request| {
+            let random_value = generate_random_value();
+            trace!(
+                "Generated random value {} for request {}",
+                random_value,
+                hex::encode(request.request_id)
+            );
 
-    // Prepare the fulfillRandomness call
-    let call_data = IVRFOracle::fulfillRandomnessCall {
-        requestId: request_id,
-        randomness: random_value,
-    };
+            let call_data = IVRFOracle::fulfillRandomnessCall {
+                requestId: request.request_id,
+                randomness: random_value,
+            };
 
-    // Build transaction
-    let tx = TransactionRequest::default()
-        .to(contract_address)
-        .input(call_data.abi_encode().into());
+            Call {
+                to: request.contract_address,
+                value: U256::ZERO,
+                data: Bytes::from(call_data.abi_encode()),
+            }
+        })
+        .collect()
+}
 
-    // Send transaction with specific nonce
-    let pending_tx = nonce_manager.send_transaction_with_nonce(tx, nonce).await?;
+/// Encodes batch calls for ERC7821 execution
+/// The mode parameter should be the batch execution mode (typically 0x01000000...)
+pub fn encode_batch_for_erc7821(calls: &[Call]) -> IBEBE::executeCall {
+    let mode_bytes: [u8; 32] = [0x01; 1]
+        .into_iter()
+        .chain([0x00; 31])
+        .collect::<Vec<u8>>()
+        .try_into()
+        .unwrap();
+    let mode_fixed_bytes = FixedBytes::<32>::from_slice(&mode_bytes);
+    let calldata = calls.abi_encode().into();
 
-    // Wait for confirmation
-    let receipt = pending_tx.get_receipt().await?;
-
-    if !receipt.status() {
-        error!(
-            "Failed to fulfill randomness request {} in transaction {:?}",
-            hex::encode(request_id),
-            receipt.transaction_hash
-        );
-        return Err("Transaction failed".into());
+    IBEBE::executeCall {
+        mode: mode_fixed_bytes,
+        executionData: calldata,
     }
+}
 
-    Ok(())
+pub fn encode_get_randomness_call(request_id: FixedBytes<32>) -> IVRFOracle::getRandomnessCall {
+    let result = IVRFOracle::getRandomnessCall {
+        requestId: request_id,
+    };
+    result
 }
