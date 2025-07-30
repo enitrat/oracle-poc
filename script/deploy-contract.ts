@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from "fs";
-import { deployContract } from "./utils";
+import { authorizeDelegation, deployBebe, deployContract } from "./utils";
 
-async function main() {
+async function deployOracle() {
   const contractAddress = await deployContract();
-
   // Save to .env CONTRACT_ADDRESS
   const envContent = readFileSync(".env", "utf8").split("\n");
   const contractAddressIndex = envContent.findIndex((line) =>
@@ -17,6 +16,19 @@ async function main() {
     envContent.push(`CONTRACT_ADDRESS=${contractAddress}`);
   }
   writeFileSync(".env", envContent.join("\n"));
+}
+
+async function setupEoaDelegation() {
+  const bebeAddress = await deployBebe();
+  if (!bebeAddress) {
+    throw new Error("Failed to deploy Bebe");
+  }
+  await authorizeDelegation(bebeAddress);
+}
+
+async function main() {
+  await deployOracle();
+  await setupEoaDelegation();
 }
 
 main();

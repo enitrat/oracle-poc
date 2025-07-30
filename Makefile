@@ -8,6 +8,7 @@ help:
 	@echo "  make dev         - Run both oracle and dashboard in separate terminals (requires tmux)"
 	@echo "  make test        - Run all tests"
 	@echo "  make clean       - Clean build artifacts"
+	@echo "  make stop        - Stop the development environment"
 
 build:
 	cargo build --release
@@ -20,7 +21,7 @@ dashboard:
 
 dev:
 	@if command -v tmux >/dev/null 2>&1; then \
-		tmux new-session -d -s zamaoracle 'anvil > /dev/null 2>&1 & docker-compose up -d && bun run script/deploy-contract.ts && cargo run --bin zamaoracle'; \
+		tmux new-session -d -s zamaoracle 'anvil --hardfork prague > /dev/null 2>&1 & docker-compose up -d && bun run script/deploy-contract.ts && cargo run --bin zamaoracle'; \
 		tmux split-window -h 'sleep 5 && cargo run --bin dashboard'; \
 		tmux attach-session -t zamaoracle; \
 	else \
@@ -32,6 +33,14 @@ dev:
 		echo "5. cargo run --bin dashboard"; \
 		exit 1; \
 	fi
+
+stop:
+	@echo "Stopping ZamaOracle development environment..."
+	@tmux kill-session -t zamaoracle 2>/dev/null || echo "No tmux session found"
+	@docker-compose down 2>/dev/null || echo "Docker compose not running"
+	@rm -f .deploy-complete
+	@lsof -i :8545 | awk 'NR>1 {print $$2}' | xargs kill -9
+	@echo "Development environment stopped"
 
 test:
 	cargo test

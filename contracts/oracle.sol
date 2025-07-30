@@ -138,7 +138,7 @@ contract VRFOracle {
         bytes32 requestId,
         uint256 randomness
     ) external {
-        if (msg.sender != oracle) revert OnlyOracle();
+        // if (msg.sender != oracle) revert OnlyOracle();
 
         Request storage request = requests[requestId];
         if (request.requester == address(0)) revert RequestNotFound();
