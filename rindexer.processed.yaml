@@ -1,0 +1,26 @@
+name: zamaoracle
+project_type: rust
+config: {}
+networks:
+  - name: sepolia
+    chain_id: 11155111
+    rpc: https://ethereum-sepolia-rpc.publicnode.com
+storage:
+  postgres:
+    enabled: true
+  csv:
+    enabled: true
+    path: ./generated_csv
+native_transfers:
+  enabled: false
+contracts:
+  - name: VRFOracle
+    details:
+      - network: sepolia
+        address: 0x5fbdb2315678afecb367f032d93f642f64180aa3
+    abi: ./abis/VRFOracle.abi.json
+    include_events:
+      - RandomnessRequested
+      - RandomnessFulfilled
+graphql:
+  port: 3001

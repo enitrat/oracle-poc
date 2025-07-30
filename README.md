@@ -1,10 +1,12 @@
-# ZamaOracle
+# VRF Oracle
 
 A high-performance Verifiable Random Function (VRF) Oracle implementation using Rust and Rindexer for Ethereum-compatible chains.
 
+> Note meant for production use. One-day hackathon project.
+
 ## Overview
 
-ZamaOracle provides cryptographically secure random values to smart contracts through a scalable, fault-tolerant architecture. It features parallel request processing, multi-account transaction relaying, and durable queue management via PostgreSQL.
+Oracle provides cryptographically secure random values to smart contracts through a scalable, fault-tolerant architecture. It features parallel request processing, multi-account transaction relaying, and durable queue management via PostgreSQL.
 
 For a deep dive into the system's design, see [docs/architecture.md](docs/architecture.md).
 
@@ -28,7 +30,7 @@ cd zamaoracle
 cp .env.example .env
 
 # Install Node.js dependencies
-npm install
+bun install
 
 # Build the Rust project
 cargo build
@@ -40,22 +42,7 @@ forge build
 ### 3. Run Services
 
 ```bash
-# 1. Start a local blockchain in a separate terminal
-anvil
-
-# 2. Start a PostgreSQL database using Docker
-docker run -d --name zamaoracle-db \
-  -e POSTGRES_USER=user \
-  -e POSTGRES_PASSWORD=password \
-  -e POSTGRES_DB=zamaoracle \
-  -p 5432:5432 \
-  postgres:15
-
-# 3. Deploy the contract. This script also updates .env with the new address.
-bun run script/deploy-contract.ts
-
-# 4. Run all oracle services (indexer, queue processor, metrics)
-cargo run -- run
+make dev
 ```
 
 ### 4. Test

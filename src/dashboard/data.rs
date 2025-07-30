@@ -225,7 +225,7 @@ impl DataLayer {
 
         for line in body.lines() {
             if line.starts_with("relayer_selected_total") {
-                if let Some(value) = parse_metric_value(line) {
+                if let Some((_, value)) = parse_metric_with_labels(line) {
                     relayer_selected_total += value;
                 }
             } else if line.starts_with("relayer_skipped_total") {
