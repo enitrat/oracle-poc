@@ -213,6 +213,89 @@ impl Relayer {
         Err("No available relayer accounts with BEBE configured".into())
     }
 
+    /// Try to get an available account for batch sending without blocking
+    pub async fn try_get_available_batch(&self) -> Option<Arc<RelayerAccount>> {
+        // Try each account once
+        for _ in 0..self.accounts.len() {
+            // Select next account based on scheduler
+            let account = match self.scheduler_type {
+                SchedulerType::RoundRobin => self.select_round_robin().await,
+                SchedulerType::Random => self.select_random().await,
+            };
+
+            // Check if account is already in use
+            {
+                let in_use = self.accounts_in_use.lock().await;
+                if in_use.contains(&account.address) {
+                    trace!("Account {} is already in use, skipping", account.address);
+                    continue;
+                }
+            }
+
+            // Check if account is available
+            match account.is_available(self.pending_block_threshold).await {
+                Ok(true) => {
+                    // Check if account has BEBE configured
+                    if account.bebe_address.is_none() {
+                        warn!(
+                            "Account {} selected but BEBE not configured",
+                            account.address
+                        );
+                        continue;
+                    }
+
+                    // Mark account as in use
+                    {
+                        let mut in_use = self.accounts_in_use.lock().await;
+                        in_use.insert(account.address);
+                    }
+
+                    span!(
+                        Level::INFO,
+                        "relayer.select_batch",
+                        address = %account.address
+                    )
+                    .in_scope(|| {
+                        trace!("Selected account {} for batch", account.address);
+                    });
+
+                    metrics::record_selection(&account.address.to_string());
+                    return Some(account);
+                }
+                Ok(false) => {
+                    if let Ok(reason) = self.determine_skip_reason(&account).await {
+                        span!(
+                            Level::DEBUG,
+                            "relayer.skip",
+                            address = %account.address,
+                            reason = %reason
+                        )
+                        .in_scope(|| {
+                            trace!(
+                                "Skipping account {} (reason: {:?})",
+                                account.address,
+                                reason
+                            );
+                        });
+                        metrics::record_skip(&account.address.to_string(), &reason.to_string());
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Error checking account {} availability: {}",
+                        account.address, e
+                    );
+                    metrics::record_skip(
+                        &account.address.to_string(),
+                        &SkipReason::RecentFailure.to_string(),
+                    );
+                }
+            }
+        }
+
+        None
+    }
+
     /// Release an account after batch processing
     pub async fn release_account(&self, address: Address) {
         let mut in_use = self.accounts_in_use.lock().await;

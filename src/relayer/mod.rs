@@ -3,6 +3,7 @@ mod config;
 pub mod metrics;
 mod scheduler;
 
+pub use account::RelayerAccount;
 pub use config::RelayerConfig;
 pub use scheduler::Relayer;
 

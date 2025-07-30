@@ -1,6 +1,5 @@
 use crate::database::QueueDatabase;
 use crate::oracle;
-use crate::oracle::IVRFOracle::getRandomnessCall;
 use crate::relayer::{Relayer, RelayerConfig};
 use alloy::sol_types::SolCall;
 use rindexer::PostgresClient;
@@ -13,21 +12,19 @@ use tracing::{error, info, trace, warn};
 pub struct QueueProcessor {
     queue_db: QueueDatabase,
     poll_interval: Duration,
-    batch_timeout: Duration,
     relayer: Option<Arc<Relayer>>,
     last_empty_log: Arc<Mutex<Option<Instant>>>,
-    last_batch_time: Arc<Mutex<Instant>>,
 }
+
+const MAX_BATCH_SIZE: usize = 100;
 
 impl QueueProcessor {
     pub fn new(postgres_client: Arc<PostgresClient>, poll_interval_millis: u64) -> Self {
         Self {
             queue_db: QueueDatabase::new(postgres_client),
             poll_interval: Duration::from_millis(poll_interval_millis),
-            batch_timeout: Duration::from_millis(1000), // Process partial batches after 1s
             relayer: None,
             last_empty_log: Arc::new(Mutex::new(None)),
-            last_batch_time: Arc::new(Mutex::new(Instant::now())),
         }
     }
 
@@ -73,11 +70,7 @@ impl QueueProcessor {
             .clone();
 
         info!(
-            "Starting queue processor with batch size: {}, batch timeout: {:?}",
-            relayer.batch_size, self.batch_timeout
-        );
-        info!(
-            "Relayer managing {} accounts with BEBE batch processing",
+            "Starting queue processor with {} relayer accounts",
             relayer.get_addresses().len()
         );
 
@@ -88,12 +81,28 @@ impl QueueProcessor {
         }
 
         loop {
-            // Check pending count first
+            // Sleep for the poll interval
+            time::sleep(self.poll_interval).await;
+
+            // 1. Check if there's an available relayer
+            let available_account = match relayer.try_get_available_batch().await {
+                Some(account) => account,
+                None => {
+                    trace!("No available relayer accounts, waiting...");
+                    continue;
+                }
+            };
+
+            let account_address = available_account.address;
+            info!("Found available relayer account: {}", account_address);
+
+            // 2. Get all pending requests from the queue
             let pending_count = match self.queue_db.get_pending_count().await {
                 Ok(count) => count,
                 Err(e) => {
                     error!("Failed to get pending count: {}", e);
-                    0
+                    relayer.release_account(account_address).await;
+                    continue;
                 }
             };
 
@@ -107,97 +116,52 @@ impl QueueProcessor {
                     info!("Queue is empty, waiting for new requests...");
                     *last_log = Some(now);
                 }
-
-                // Wait before polling again
-                time::sleep(self.poll_interval).await;
+                relayer.release_account(account_address).await;
                 continue;
             }
 
-            // Check if we should process immediately or wait
-            let last_batch_elapsed = {
-                let last_time = self.last_batch_time.lock().await;
-                last_time.elapsed()
+            // Dequeue ALL pending requests (up to a reasonable limit to avoid memory issues)
+            let max_batch_size = 100; // Reasonable limit for a single multicall
+            let requests_to_dequeue = std::cmp::min(pending_count as usize, max_batch_size);
+
+            let requests = match self.queue_db.dequeue_requests(requests_to_dequeue).await {
+                Ok(reqs) => reqs,
+                Err(e) => {
+                    error!("Failed to dequeue requests: {:?}", e);
+                    relayer.release_account(account_address).await;
+                    continue;
+                }
             };
 
-            let should_process = pending_count >= relayer.batch_size as i64
-                || (pending_count > 0 && last_batch_elapsed >= self.batch_timeout);
+            if requests.is_empty() {
+                relayer.release_account(account_address).await;
+                continue;
+            }
 
-            if should_process {
-                let reason = if pending_count >= relayer.batch_size as i64 {
-                    format!(
-                        "queue has {} requests (>= batch size {})",
-                        pending_count, relayer.batch_size
-                    )
-                } else {
-                    format!(
-                        "timeout elapsed ({:?} >= {:?})",
-                        last_batch_elapsed, self.batch_timeout
-                    )
-                };
+            info!(
+                "Processing {} requests with relayer {}",
+                requests.len(),
+                account_address
+            );
 
-                trace!("Processing batch: {}", reason);
-                // Calculate how many batches we can process based on available relayers
-                let available_relayers = relayer.accounts.len();
-                let batches_to_process = std::cmp::min(
-                    (pending_count as usize).div_ceil(relayer.batch_size),
-                    available_relayers,
-                );
+            // 3. Process all requests in a single multicall
+            let queue_db = self.queue_db.clone();
+            let result = Self::process_all_requests(requests, queue_db, available_account).await;
 
-                trace!(
-                    "Processing up to {} batches with {} available relayers (queue has {} pending)",
-                    batches_to_process,
-                    available_relayers,
-                    pending_count
-                );
+            // Always release the account after processing
+            relayer.release_account(account_address).await;
 
-                // Update last batch time
-                {
-                    let mut last_time = self.last_batch_time.lock().await;
-                    *last_time = Instant::now();
-                }
-
-                // Spawn multiple batch processors based on available relayers
-                for _ in 0..batches_to_process {
-                    // Dequeue up to batch_size requests
-                    let requests = match self.queue_db.dequeue_requests(relayer.batch_size).await {
-                        Ok(reqs) => reqs,
-                        Err(e) => {
-                            error!("Failed to dequeue requests: {:?}", e);
-                            break;
-                        }
-                    };
-
-                    if requests.is_empty() {
-                        break; // No more requests
-                    }
-
-                    let batch_size = requests.len();
-                    trace!("Spawning processor for batch of {} requests", batch_size);
-
-                    // Process batch in background
-                    let queue_db = Arc::new(self.queue_db.clone());
-                    let relayer_clone = relayer.clone();
-
-                    tokio::spawn(async move {
-                        if let Err(e) =
-                            Self::process_batch_requests(requests, queue_db, relayer_clone).await
-                        {
-                            error!("Failed to process batch: {:?}", e);
-                        }
-                    });
-                }
-            } else {
-                // Wait a bit before checking again
-                time::sleep(Duration::from_millis(50)).await;
+            if let Err(e) = result {
+                error!("Failed to process requests: {:?}", e);
             }
         }
     }
 
-    /// Process a batch of requests
-    async fn process_batch_requests(
+    /// Process all requests in a single multicall
+    async fn process_all_requests(
         requests: Vec<crate::database::PendingRequest>,
-        queue_db: Arc<QueueDatabase>,
-        relayer: Arc<Relayer>,
+        queue_db: QueueDatabase,
+        account: Arc<crate::relayer::RelayerAccount>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if requests.is_empty() {
             return Ok(());
@@ -208,100 +172,79 @@ impl QueueProcessor {
 
         info!("Processing batch of {} requests", batch_size);
 
-        // Wait for the next available account with BEBE configured
-        // This will block until a relayer is available, providing natural backpressure
-        let account = loop {
-            match relayer.next_available_batch().await {
-                Ok(acc) => break acc,
-                Err(e) => {
-                    warn!(
-                        "No available relayer account for batch: {:?}. Waiting...",
-                        e
-                    );
-                    // Wait a bit before retrying
-                    time::sleep(Duration::from_millis(500)).await;
+        // Build batch calls
+        let calls = oracle::build_batch_calls(&requests);
+
+        // Send batch transaction
+        match account.send_batch(&calls).await {
+            Ok(tx_hash) => {
+                info!("Batch transaction sent: {}", tx_hash);
+
+                // Record metrics for batch fulfillment
+                crate::relayer::metrics::record_batch_fulfillment(batch_size);
+
+                // Wait a bit for transaction to be mined
+                time::sleep(Duration::from_secs(2)).await;
+
+                // Check which requests were actually fulfilled and only mark those as completed
+                // let mut fulfilled_requests = Vec::new();
+                // let mut unfulfilled_requests = Vec::new();
+
+                // for request in requests.iter() {
+                //     let encoded_call = oracle::encode_get_randomness_call(request.request_id);
+                //     match account.send_call(request.contract_address, encoded_call.abi_encode().into()).await {
+                //         Ok(call_result) => {
+                //             let call_res_array = call_result.as_ref();
+                //             match oracle::IVRFOracle::getRandomnessCall::abi_decode_returns(call_res_array) {
+                //                 Ok(decoded_result) => {
+                //                     if decoded_result.fulfilled {
+                //                         fulfilled_requests.push(request.request_id);
+                //                     } else {
+                //                         crate::relayer::metrics::record_batch_unfulfilled(1);
+                //                         unfulfilled_requests.push(request.request_id);
+                //                     }
+                //                 }
+                //                 Err(e) => {
+                //                     error!("Failed to decode call result for request {}: {:?}", hex::encode(request.request_id), e);
+                //                     unfulfilled_requests.push(request.request_id);
+                //                 }
+                //             }
+                //         }
+                //         Err(e) => {
+                //             error!("Failed to send call for request {}: {:?}", hex::encode(request.request_id), e);
+                //             unfulfilled_requests.push(request.request_id);
+                //         }
+                //     }
+                // }
+
+                // Mark only the fulfilled requests as completed
+                for request_id in request_ids.iter() {
+                    queue_db.mark_fulfilled(*request_id).await?;
                 }
+
+                // // Put unfulfilled requests back in the queue for retry
+                // for request_id in unfulfilled_requests.iter() {
+                //     queue_db.requeue_request(*request_id).await?;
+                // }
+
+                // info!(
+                //     "Batch processing complete: {} succeeded, {} failed/retrying. Used account {}",
+                //     fulfilled_requests.len(), unfulfilled_requests.len(), account.address
+                // );
+                Ok(())
             }
-        };
+            Err(e) => {
+                let error_msg = format!("Failed to fulfill batch: {e:?}");
+                warn!(
+                    "Failed to fulfill batch of {} requests: {:?}",
+                    batch_size, e
+                );
 
-        let account_address = account.address;
-
-        // Ensure we release the account when done
-        let result = async {
-            // Build batch calls
-            let calls = oracle::build_batch_calls(&requests);
-
-            // Send batch transaction
-            match account.send_batch(&calls).await {
-                Ok(tx_hash) => {
-                    // Record metrics for batch fulfillment
-                    crate::relayer::metrics::record_batch_fulfillment(batch_size);
-
-                    // Check which requests were actually fulfilled and only mark those as completed
-                    let mut fulfilled_requests = Vec::new();
-                    let mut unfulfilled_requests = Vec::new();
-
-                    for request in requests.iter() {
-                        let encoded_call = oracle::encode_get_randomness_call(request.request_id);
-                        match account.send_call(request.contract_address, encoded_call.abi_encode().into()).await {
-                            Ok(call_result) => {
-                                let call_res_array = call_result.as_ref();
-                                match oracle::IVRFOracle::getRandomnessCall::abi_decode_returns(call_res_array) {
-                                    Ok(decoded_result) => {
-                                        if decoded_result.fulfilled {
-                                            fulfilled_requests.push(request.request_id);
-                                        } else {
-                                            crate::relayer::metrics::record_batch_unfulfilled(1);
-                                            unfulfilled_requests.push(request.request_id);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to decode call result for request {}: {:?}", hex::encode(request.request_id), e);
-                                        unfulfilled_requests.push(request.request_id);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to send call for request {}: {:?}", hex::encode(request.request_id), e);
-                                unfulfilled_requests.push(request.request_id);
-                            }
-                        }
-                    }
-
-                    // Mark only the fulfilled requests as completed
-                    for request_id in fulfilled_requests.iter() {
-                        queue_db.mark_fulfilled(*request_id).await?;
-                    }
-
-                    // Put unfulfilled requests back in the queue for retry
-                    for request_id in unfulfilled_requests.iter() {
-                        queue_db.requeue_request(*request_id).await?;
-                    }
-
-                    info!(
-                        "Batch processing complete: {} succeeded, {} failed/retrying. Used account {}",
-                        fulfilled_requests.len(), unfulfilled_requests.len(), account_address
-                    );
-                    Ok(())
-                }
-                Err(e) => {
-                    let error_msg = format!("Failed to fulfill batch: {e:?}");
-                    warn!(
-                        "Failed to fulfill batch of {} requests: {:?}",
-                        batch_size, e
-                    );
-
-                    // Mark all requests as failed (will retry if under max retries)
-                    queue_db.mark_batch_failed(&request_ids, &error_msg).await?;
-                    Ok(())
-                }
+                // Mark all requests as failed (will retry if under max retries)
+                queue_db.mark_batch_failed(&request_ids, &error_msg).await?;
+                Ok(())
             }
-        }.await;
-
-        // Always release the account
-        relayer.release_account(account_address).await;
-
-        result
+        }
     }
 }
 

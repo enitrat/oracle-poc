@@ -95,7 +95,7 @@ impl RelayerConfig {
 
         // Parse batch size
         let batch_size = env::var("BATCH_SIZE")
-            .unwrap_or_else(|_| "10".to_string())
+            .unwrap_or_else(|_| "100".to_string())
             .parse::<usize>()
             .map_err(|_| "Invalid BATCH_SIZE value")?;
 
@@ -106,31 +106,5 @@ impl RelayerConfig {
             bebe_address,
             batch_size,
         })
-    }
-
-    /// Create a sample .env.example file content
-    pub fn example_env() -> String {
-        r#"# Relayer Configuration
-
-# Comma-separated list of private keys (without 0x prefix is also ok)
-RELAYER_PRIVATE_KEYS=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80,0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d,0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
-
-# Minimum gas balance required for each account (in Wei)
-# Default: 0.005 ETH = 5000000000000000 Wei
-RELAYER_MIN_GAS_WEI=5000000000000000
-
-# Scheduler type: round_robin or random
-# Default: round_robin
-RELAYER_SCHEDULER=round_robin
-
-# Maximum number of pending transactions before skipping an account
-# Default: 3
-RELAYER_PENDING_BLOCK_THRESHOLD=3
-
-# Other required environment variables
-ORACLE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-RPC_URL=http://127.0.0.1:8545
-DATABASE_URL=postgresql://user:password@localhost/zamaoracle
-"#.to_string()
     }
 }

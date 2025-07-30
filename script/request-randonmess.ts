@@ -39,8 +39,8 @@ interface BatchResult {
 }
 
 // ==================== Configuration ====================
-const BATCH_SIZE = 250;
-const WAIT_TIME_FOR_FULFILLMENT_MS = 2000;
+const BATCH_SIZE = 50;
+const WAIT_TIME_FOR_FULFILLMENT_MS = 3000;
 const BATCH_INTERVAL_MS = 1000; // 7 seconds to ensure no overlap with 6s wait time
 const RESULT_CLEANUP_INTERVAL_MS = 20000; // 10 seconds
 

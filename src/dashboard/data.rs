@@ -157,7 +157,7 @@ impl DataLayer {
         // Query for counts
         let count_query = r#"
             SELECT
-                COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                COUNT(*) FILTER (WHERE status IN ('pending', 'processing')) as pending,
                 COUNT(*) FILTER (WHERE status = 'fulfilled') as fulfilled,
                 COUNT(*) FILTER (WHERE status = 'failed') as failed
             FROM zamaoracle_vrf_oracle.pending_requests
