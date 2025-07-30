@@ -1,10 +1,10 @@
-.PHONY: help build run test dashboard dev clean
+.PHONY: help build run test dashboard dashboard-v2 dev clean
 
 help:
 	@echo "Available commands:"
 	@echo "  make build       - Build the oracle and dashboard binaries"
 	@echo "  make run         - Run the oracle services"
-	@echo "  make dashboard   - Run the live dashboard"
+	@echo "  make dashboard   - Run the dashboard"
 	@echo "  make dev         - Run both oracle and dashboard in separate terminals (requires tmux)"
 	@echo "  make test        - Run all tests"
 	@echo "  make clean       - Clean build artifacts"
@@ -20,11 +20,16 @@ dashboard:
 
 dev:
 	@if command -v tmux >/dev/null 2>&1; then \
-		tmux new-session -d -s zamaoracle 'cargo run -- run'; \
-		tmux split-window -h 'cargo run --bin dashboard'; \
+		tmux new-session -d -s zamaoracle 'anvil > /dev/null 2>&1 & docker-compose up -d && bun run script/deploy-contract.ts && cargo run --bin zamaoracle'; \
+		tmux split-window -h 'sleep 5 && cargo run --bin dashboard'; \
 		tmux attach-session -t zamaoracle; \
 	else \
-		echo "tmux not found. Please install tmux or run oracle and dashboard in separate terminals."; \
+		echo "tmux not found. Please install tmux or run the following commands in separate terminals:"; \
+		echo "1. anvil"; \
+		echo "2. docker-compose up -d"; \
+		echo "3. bun run script/deploy-contract.ts"; \
+		echo "4. cargo run -- run"; \
+		echo "5. cargo run --bin dashboard"; \
 		exit 1; \
 	fi
 

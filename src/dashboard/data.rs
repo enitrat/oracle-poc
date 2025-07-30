@@ -15,7 +15,15 @@ pub struct Stats {
     pub max_latency: f64,
     pub relayer_selected_total: u64,
     pub relayer_skips: HashMap<String, u64>,
+    pub relayer_stats: HashMap<String, RelayerStats>,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RelayerStats {
+    pub selected_count: u64,
+    pub skip_count: u64,
+    pub skip_reasons: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -27,8 +35,8 @@ pub struct StatsSnapshot {
 }
 
 pub struct DataLayer {
-    pg_client: Client,
-    prometheus_url: String,
+    pub pg_client: Client,
+    pub prometheus_url: String,
 }
 
 impl DataLayer {
@@ -96,7 +104,54 @@ impl DataLayer {
             stats.relayer_skips = prom_stats.1;
         }
 
+        // Get per-relayer statistics
+        if let Ok(relayer_stats) = self.get_relayer_stats().await {
+            stats.relayer_stats = relayer_stats;
+        }
+
         Ok(stats)
+    }
+
+    pub async fn get_network_breakdown(&self) -> Result<Vec<(String, u64)>> {
+        let query = r#"
+            SELECT network, COUNT(*) as count
+            FROM zamaoracle_vrf_oracle.pending_requests
+            WHERE status IN ('pending', 'processing', 'fulfilled')
+            GROUP BY network
+            ORDER BY count DESC
+        "#;
+
+        let rows = self.pg_client.query(query, &[]).await?;
+        let mut results = Vec::new();
+
+        for row in rows {
+            let network: String = row.get(0);
+            let count: i64 = row.get(1);
+            results.push((network, count as u64));
+        }
+
+        Ok(results)
+    }
+
+    pub async fn get_recent_errors(&self, limit: i64) -> Result<Vec<(DateTime<Utc>, String)>> {
+        let query = r#"
+            SELECT updated_at, last_error
+            FROM zamaoracle_vrf_oracle.pending_requests
+            WHERE last_error IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT $1
+        "#;
+
+        let rows = self.pg_client.query(query, &[&limit]).await?;
+        let mut results = Vec::new();
+
+        for row in rows {
+            let timestamp: chrono::DateTime<Utc> = row.get(0);
+            let error: String = row.get(1);
+            results.push((timestamp, error));
+        }
+
+        Ok(results)
     }
 
     async fn get_postgres_stats(&self) -> Result<(u64, u64, u64, f64, f64, f64, Option<String>)> {
@@ -184,6 +239,38 @@ impl DataLayer {
         }
 
         Ok((relayer_selected_total, relayer_skips))
+    }
+
+    pub async fn get_relayer_stats(&self) -> Result<HashMap<String, RelayerStats>> {
+        let metrics_url = format!("{}/metrics", self.prometheus_url);
+
+        let response = reqwest::get(&metrics_url).await?;
+        let body = response.text().await?;
+
+        let mut relayer_stats: HashMap<String, RelayerStats> = HashMap::new();
+
+        for line in body.lines() {
+            if line.starts_with("relayer_selected_total") {
+                if let Some((labels, value)) = parse_metric_with_labels(line) {
+                    if let Some(address) = extract_label_value(&labels, "address") {
+                        relayer_stats.entry(address).or_default().selected_count = value;
+                    }
+                }
+            } else if line.starts_with("relayer_skipped_total") {
+                if let Some((labels, value)) = parse_metric_with_labels(line) {
+                    if let (Some(address), Some(reason)) = (
+                        extract_label_value(&labels, "address"),
+                        extract_label_value(&labels, "reason"),
+                    ) {
+                        let stats = relayer_stats.entry(address).or_default();
+                        stats.skip_count += value;
+                        *stats.skip_reasons.entry(reason).or_insert(0) = value;
+                    }
+                }
+            }
+        }
+
+        Ok(relayer_stats)
     }
 }
 

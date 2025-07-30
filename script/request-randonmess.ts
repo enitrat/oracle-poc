@@ -192,7 +192,7 @@ const runContinuousRequests = async (): Promise<void> => {
   // Fire batches every second
   setInterval(() => {
     // Random batch size between 5 and 30
-    const batchSize = Math.floor(Math.random() * 26) + 5;
+    const batchSize = Math.floor(Math.random() * 55) + 5;
     currentBatchId++;
 
     console.log(

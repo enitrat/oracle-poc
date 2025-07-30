@@ -2,6 +2,23 @@
 
 A real-time terminal dashboard for monitoring ZamaOracle queue and relayer activity.
 
+## Dashboard Versions
+
+### Basic Dashboard (`dashboard`)
+
+The original dashboard with basic metrics display using sparklines and gauges.
+
+### Advanced Dashboard (`dashboard-v2`)
+
+An improved dashboard with:
+
+- Proper charts with axis labels and scaling
+- Request rate tracking (requests/minute)
+- Latency trend analysis with moving averages
+- Network distribution breakdown
+- Recent error log viewer
+- Better visual layout
+
 ## Prerequisites
 
 1. **PostgreSQL Database**: The dashboard requires a running PostgreSQL instance with the ZamaOracle database.
@@ -14,8 +31,15 @@ A real-time terminal dashboard for monitoring ZamaOracle queue and relayer activ
 export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rindexer
 export PROMETHEUS_URL=http://127.0.0.1:9090
 
-# Run the dashboard
+# Run the basic dashboard
 cargo run --bin dashboard
+
+# Run the advanced dashboard (recommended)
+cargo run --bin dashboard-v2
+
+# Or use Make commands
+make dashboard      # Basic version
+make dashboard-v2   # Advanced version
 ```
 
 ### Starting PostgreSQL with Docker
@@ -42,6 +66,8 @@ docker run -d --name zamaoracle-db \
 
 ## UI Layout
 
+### Basic Dashboard
+
 ```
 +-----------------------------------------------------------+
 | ZamaOracle Dashboard                                      |
@@ -57,6 +83,31 @@ docker run -d --name zamaoracle-db \
 +-----------------------------------------------------------+
 ```
 
+### Dashboard with Relayer Statistics
+
+```
++-------------------------------------------------------------------+
+| ZamaOracle Dashboard | LIVE | Last Update: 2s ago                |
++-------------------------------------------------------------------+
+| Pending | Fulfilled | Avg Latency | Failed | Rate/min           |
+|   42    |   1,337   |    1.37s    |   3    |   12.5             |
++-------------------------------------------------------------------+
+|     Queue Length History          |       Latency Trend          |
+|  100 ┤                           |   5s ┤     ╱╲                  |
+|   50 ┤    ╱╲    ╱╲              |  2.5s┤ ────  ╲──── (avg)       |
+|    0 └────────────────           |   0s └─────────────            |
+|      60s ago    30s ago    now   |                                |
++---------------------+---------------------+-----------------------+
+| Skip Reasons        | Relayer Stats       | Recent Errors         |
+| █████ insufficient  | Addr     Txs  Rate  | 14:23:01 Nonce too low|
+| ███   pending_tx    | 0x1a2... 142  95%   | 14:22:15 Gas spike    |
+| ██    recent_fail   | 0x3b4... 89   87%   | 14:21:33 RPC timeout  |
+|                     | 0x5c6... 45   82%   |                       |
++---------------------+---------------------+-----------------------+
+| Status: System running normally | Selected: 1337 | Skip Total: 42 |
++-------------------------------------------------------------------+
+```
+
 ## Keyboard Controls
 
 - `q` or `Q`: Quit the dashboard
@@ -64,15 +115,19 @@ docker run -d --name zamaoracle-db \
 
 ## Metrics Displayed
 
-| Metric              | Description                                | Source                     |
-| ------------------- | ------------------------------------------ | -------------------------- |
-| **Pending**         | Number of requests waiting to be processed | `pending_requests` table   |
-| **Fulfilled**       | Total successfully processed requests      | `pending_requests` table   |
-| **Avg Latency**     | Average time from request to fulfillment   | Calculated from timestamps |
-| **Failed**          | Number of permanently failed requests      | `pending_requests` table   |
-| **Queue Sparkline** | Visual history of queue length             | Last 120 samples (60s)     |
-| **Latency Gauge**   | Visual representation of current latency   | Current avg latency        |
-| **Relayer Skips**   | Top reasons for skipping relayer accounts  | Prometheus metrics         |
+| Metric                    | Description                                      | Source                          |
+| ------------------------- | ------------------------------------------------ | ------------------------------- |
+| **Pending**               | Number of requests waiting to be processed       | `pending_requests` table        |
+| **Fulfilled**             | Total successfully processed requests            | `pending_requests` table        |
+| **Avg Latency**           | Average time from request to fulfillment         | Calculated from timestamps      |
+| **Failed**                | Number of permanently failed requests            | `pending_requests` table        |
+| **Queue Sparkline/Chart** | Visual history of queue length                   | Last 120 samples (60s)          |
+| **Latency Gauge/Chart**   | Visual representation of latency trends          | Current avg + moving average    |
+| **Relayer Skips**         | Top reasons for skipping relayer accounts        | Prometheus metrics              |
+| **Request Rate**          | Fulfilled requests per minute                    | Calculated from fulfilled count |
+| **Network Distribution**  | Percentage breakdown by network                  | Database query                  |
+| **Error Log**             | Recent error messages with timestamps            | Last N errors from database     |
+| **Relayer Stats**         | Per-relayer transaction counts and success rates | Prometheus metrics              |
 
 ## Performance
 
